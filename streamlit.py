@@ -16,9 +16,13 @@ st.set_page_config(page_title="Pre-Exam Monitoring 🚨", layout="wide", page_ic
 # =====================================================
 # MODELS
 # =====================================================
-CUSTOM_MODEL_PATH = r"C:\Users\dhanak\PycharmProjects\fyp\best (3).pt"
+
+CUSTOM_MODEL_PATH = "models/best (3).pt"
 custom_model = YOLO(CUSTOM_MODEL_PATH)
-yolo_general = YOLO("yolov8n.pt")
+
+YOLO_GENERAL_PATH = "models/yolov8n.pt"
+yolo_general = YOLO(YOLO_GENERAL_PATH)
+
 
 YOLO_RENAME = {"mobile": "cell phone", "phone": "cell phone"}
 ALL_OBJECTS = ['bag', 'book', 'calculator', 'cell phone', 'notebook', 'notes', 'smartwatch']
