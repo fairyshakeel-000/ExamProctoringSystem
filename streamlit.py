@@ -5,6 +5,7 @@ from gtts import gTTS
 import tempfile, os
 from datetime import datetime
 import pandas as pd
+import numpy as np
 
 # =====================================================
 # PAGE CONFIG
@@ -58,7 +59,7 @@ confidence = st.sidebar.slider("Detection Confidence Threshold", 0.1, 1.0, 0.75)
 selected_objects = st.sidebar.multiselect("Monitor Objects:", ALL_OBJECTS, default=['cell phone','calculator','bag'])
 
 # =====================================================
-# HEADER WITH GRADIENT
+# HEADER
 # =====================================================
 st.markdown("""
 <h1 style='background: linear-gradient(to right, #ff4b1f, #ff9068); -webkit-background-clip: text;
@@ -67,57 +68,45 @@ color: transparent; font-weight: 900;'>Pre-Exam Proctoring System 🚨</h1>
 """, unsafe_allow_html=True)
 
 # =====================================================
-# CAMERA SETUP
+# CAMERA INPUT (DEPLOYMENT SAFE)
 # =====================================================
-start = st.toggle("🎥 Start Camera")
+st.markdown("### 🎥 Live Camera Feed (Browser Based)")
+img_file_buffer = st.camera_input("Open Camera")
 FRAME = st.empty()
 
-def open_camera():
-    cap = cv2.VideoCapture(0)
-    if not cap.isOpened():
-        st.error("🚫 Camera not found. Please run locally with webcam.")
-        return None
-    return cap
+if img_file_buffer is not None:
+    file_bytes = np.asarray(bytearray(img_file_buffer.read()), dtype=np.uint8)
+    frame = cv2.imdecode(file_bytes, 1)
+    frame = cv2.resize(frame, (640, 480))
 
-# =====================================================
-# DETECTION LOOP
-# =====================================================
-if start:
-    cap = open_camera()
-    if cap is None: st.stop()
+    detected_now = []
 
-    while True:
-        ret, frame = cap.read()
-        if not ret: break
-        frame = cv2.resize(frame, (640,480))
-        detected_now = []
+    for model in [custom_model, yolo_general]:
+        results = model.predict(frame, conf=confidence)
+        for r in results:
+            if r.boxes is not None:
+                for box in r.boxes:
+                    cls = int(box.cls[0])
+                    name = YOLO_RENAME.get(r.names[cls], r.names[cls])
+                    if float(box.conf[0]) < confidence: continue
 
-        for model in [custom_model, yolo_general]:
-            results = model.predict(frame, conf=confidence)
-            for r in results:
-                if r.boxes is not None:
-                    for box in r.boxes:
-                        cls = int(box.cls[0])
-                        name = YOLO_RENAME.get(r.names[cls], r.names[cls])
-                        if float(box.conf[0]) < confidence: continue
+                    detected_now.append(name)
+                    x1, y1, x2, y2 = map(int, box.xyxy[0])
+                    color = (0,0,255) if name in selected_objects else (255,0,0)
+                    thickness = 3 if name in selected_objects else 2
+                    cv2.rectangle(frame, (x1,y1),(x2,y2), color, thickness)
+                    cv2.putText(frame, name, (x1,y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255),2)
 
-                        detected_now.append(name)
-                        x1, y1, x2, y2 = map(int, box.xyxy[0])
-                        color = (0,0,255) if name in selected_objects else (255,0,0)
-                        thickness = 3 if name in selected_objects else 2
-                        cv2.rectangle(frame, (x1,y1),(x2,y2), color, thickness)
-                        cv2.putText(frame, name, (x1,y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255),2)
+                    if name in selected_objects:
+                        if name not in st.session_state.spoken:
+                            speak_text(f"Prohibited: {name} detected!")
+                            st.session_state.spoken[name] = True
+                        st.session_state.collected.append(name)
+                        screenshot_path = take_screenshot(frame, name)
+                        st.session_state.history.append({'name': name,'screenshot': screenshot_path,'time': datetime.now()})
 
-                        if name in selected_objects:
-                            if name not in st.session_state.spoken:
-                                speak_text(f"Prohibited: {name} detected!")
-                                st.session_state.spoken[name] = True
-                            st.session_state.collected.append(name)
-                            screenshot_path = take_screenshot(frame, name)
-                            st.session_state.history.append({'name': name,'screenshot': screenshot_path,'time': datetime.now()})
-
-        st.session_state.detected = list(set(detected_now))
-        FRAME.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+    st.session_state.detected = list(set(detected_now))
+    FRAME.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
 
 # =====================================================
 # DASHBOARD SUMMARY
