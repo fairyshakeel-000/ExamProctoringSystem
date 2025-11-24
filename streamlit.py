@@ -68,45 +68,65 @@ color: transparent; font-weight: 900;'>Pre-Exam Proctoring System 🚨</h1>
 """, unsafe_allow_html=True)
 
 # =====================================================
-# CAMERA INPUT (DEPLOYMENT SAFE)
+# CAMERA INPUT (DEPLOYMENT SAFE + AUTO DETECTION)
 # =====================================================
-st.markdown("### 🎥 Live Camera Feed (Browser Based)")
-img_file_buffer = st.camera_input("Open Camera")
-FRAME = st.empty()
+# =====================================================
+# LIVE CAMERA STREAM (REAL-TIME DETECTION)
+# =====================================================
+from streamlit_webrtc import webrtc_streamer, VideoProcessorBase
+import threading
 
-if img_file_buffer is not None:
-    file_bytes = np.asarray(bytearray(img_file_buffer.read()), dtype=np.uint8)
-    frame = cv2.imdecode(file_bytes, 1)
-    frame = cv2.resize(frame, (640, 480))
+st.markdown("### 🎥 LIVE Camera Detection (Real-Time)")
 
-    detected_now = []
+class VideoProcessor(VideoProcessorBase):
+    def recv(self, frame):
+        img = frame.to_ndarray(format="bgr24")
+        img = cv2.resize(img, (640, 480))
+        detected_now = []
 
-    for model in [custom_model, yolo_general]:
-        results = model.predict(frame, conf=confidence)
-        for r in results:
-            if r.boxes is not None:
-                for box in r.boxes:
-                    cls = int(box.cls[0])
-                    name = YOLO_RENAME.get(r.names[cls], r.names[cls])
-                    if float(box.conf[0]) < confidence: continue
+        results_custom = custom_model(img, conf=confidence)
+        results_general = yolo_general(img, conf=confidence)
 
-                    detected_now.append(name)
-                    x1, y1, x2, y2 = map(int, box.xyxy[0])
-                    color = (0,0,255) if name in selected_objects else (255,0,0)
-                    thickness = 3 if name in selected_objects else 2
-                    cv2.rectangle(frame, (x1,y1),(x2,y2), color, thickness)
-                    cv2.putText(frame, name, (x1,y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255),2)
+        for results in [results_custom, results_general]:
+            for r in results:
+                if r.boxes is not None:
+                    for box in r.boxes:
+                        cls = int(box.cls[0])
+                        name = YOLO_RENAME.get(r.names[cls], r.names[cls])
+                        if float(box.conf[0]) < confidence:
+                            continue
 
-                    if name in selected_objects:
-                        if name not in st.session_state.spoken:
-                            speak_text(f"Prohibited: {name} detected!")
-                            st.session_state.spoken[name] = True
-                        st.session_state.collected.append(name)
-                        screenshot_path = take_screenshot(frame, name)
-                        st.session_state.history.append({'name': name,'screenshot': screenshot_path,'time': datetime.now()})
+                        detected_now.append(name)
+                        x1, y1, x2, y2 = map(int, box.xyxy[0])
 
-    st.session_state.detected = list(set(detected_now))
-    FRAME.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+                        color = (0,0,255) if name in selected_objects else (255,0,0)
+                        thickness = 3 if name in selected_objects else 2
+
+                        cv2.rectangle(img, (x1, y1), (x2, y2), color, thickness)
+                        cv2.putText(img, name, (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2)
+
+                        if name in selected_objects:
+                            if name not in st.session_state.spoken:
+                                speak_text(f"Prohibited: {name} detected!")
+                                st.session_state.spoken[name] = True
+
+                            st.session_state.collected.append(name)
+                            screenshot_path = take_screenshot(img, name)
+                            st.session_state.history.append({
+                                'name': name,
+                                'screenshot': screenshot_path,
+                                'time': datetime.now()
+                            })
+
+        st.session_state.detected = list(set(detected_now))
+        return img
+
+webrtc_streamer(
+    key="live-detection",
+    video_processor_factory=VideoProcessor,
+    media_stream_constraints={"video": True, "audio": False},
+    async_processing=True
+)
 
 # =====================================================
 # DASHBOARD SUMMARY
